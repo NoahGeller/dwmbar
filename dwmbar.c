@@ -6,6 +6,7 @@
 
 typedef struct {
 	char* command;
+	int interval;
 	int signal;
 } Module;
 
@@ -18,6 +19,7 @@ typedef struct {
 static void bar_loop();
 static void run_command();
 static void run_commands();
+static void run_commands_init();
 static void setup_signals();
 static int setup_X();
 static void signal_handler();
@@ -26,6 +28,7 @@ static void write_bar();
 
 static char bar[NUM_MODULES][MODULE_LENGTH] = {0};
 static char bar_string[BAR_LENGTH];
+static int timer[NUM_MODULES] = {0};
 
 static Display *dpy;
 static int screen;
@@ -52,16 +55,28 @@ void run_command(const Module *module, char* output) {
 	pclose(p);
 }
 
-/* Traverses the modules array and runs each command, storing each output as
- * a string in the bar array. */
+/* Traverses the modules array and tries to run each command, storing outputs
+ * as strings in the bar array. If the module's interval hasn't passed, it
+ * increments that module's timer but does not run the command.
+ */
 void run_commands() {
-	const Module* current;
 	for (unsigned int i = 0; i < NUM_MODULES; i++) {
-		current = modules + i;
-		run_command(current, bar[i]);
+		if (modules[i].interval && timer[i] + 1 >= modules[i].interval) {
+			run_command(&modules[i], bar[i]);
+			timer[i] = 0;
+			write_bar();
+		} else {
+			timer[i]++;
+		}
 	}
 
-	update_bar_string();
+}
+
+/* Runs all commands without considering their intervals. */
+void run_commands_init() {
+	for (unsigned int i = 0; i < NUM_MODULES; i++)
+		run_command(&modules[i], bar[i]);
+
 	write_bar();
 }
 
@@ -79,8 +94,9 @@ void update_bar_string() {
 	bar_string[i - strlen(delim)] = '\0';
 }
 
-/* Writes bar_string to the screen. */
+/* Writes the bar to the screen. */
 void write_bar() {
+	update_bar_string();
 	XStoreName(dpy, root, bar_string);
 	XFlush(dpy);
 }
@@ -88,10 +104,11 @@ void write_bar() {
 /* Updates the bar every second. */
 void bar_loop() {
 	setup_signals();
+	run_commands_init();
 
 	while (1) {
-		run_commands();
 		sleep(1.0);
+		run_commands();
 	}
 }
 
@@ -109,13 +126,12 @@ int setup_X() {
 
 /* When the application recieves SIGUSR1, this handler runs the appropriate
  * commands and updates the bar accordingly.
- * */
+ */
 void signal_handler(int sig) {
 	for (unsigned int i = 0; i < NUM_MODULES; i++) {
-		if (modules[i].signal == sig)
+		if (modules[i].signal && modules[i].signal + SIGRTMIN == sig)
 			run_command(&modules[i], bar[i]);
 	}
-	update_bar_string();
 	write_bar();
 }
 
